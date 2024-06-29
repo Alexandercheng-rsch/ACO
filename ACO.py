@@ -1,8 +1,9 @@
 import numpy as np
 import numba as nb
 import random
-from read_file import tsplib_distance_matrix
-
+from ACO.read_file import tsplib_distance_matrix
+import time
+np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
 spec = [
     ('distances', nb.float64[:,:]),
     ('n_ants', nb.int64),
@@ -24,7 +25,8 @@ def rand_choice_nb(arr, prob):
     :param prob: A 1D numpy array of probabilities for the given samples.
     :return: A random sample from the given array with a given probability.
     """
-    return arr[np.searchsorted(np.cumsum(prob), np.random.random(), side="right")]
+    a = np.searchsorted(np.cumsum(prob), np.random.random(), side="right")
+    return arr[a]
 
 @nb.experimental.jitclass(spec)
 class AntColony:
@@ -37,61 +39,68 @@ class AntColony:
         self.rho = rho
         self.Q = Q
         self.initial_pheromone = initial_pheromone
-        self.n_cities = distances.shape[0]
+        self.n_cities = distances.shape[0] #assumption of symmetric distance matrix
         self.pheromones = np.full((self.n_cities, self.n_cities), initial_pheromone)
 
     def gen_paths(self):
-        paths = []
-        for _ in range(self.n_ants):
+        paths = np.zeros((self.n_ants, self.n_cities + 2)) #extra entry for the distance column
+        for i in range(0, self.n_ants):
             path = self.construct_path()
-            paths.append((path, self.path_dist(path)))
+            paths[i, :-1] = path
+            paths[i, -1] = self.path_dist(path)
+
+
         return paths
 
 
     def construct_path(self):
-        path = []
+        path = np.zeros((1, self.n_cities + 1), dtype=np.int64)
         initial_point = random.randint(0, len(self.distances) - 1)
         unvisited = np.ones((1, len(self.distances)))
         unvisited[:, initial_point] = 0
-        prev = initial_point
-        for _ in range(len(self.distances) - 1):
-            get_path = self.choose_node(unvisited, self.pheromones[prev], self.distances[prev])
-            path.append((prev, get_path))
-            prev = get_path
+        path[:, 0] = initial_point
+        for i in range(1, len(self.distances)):
 
-            unvisited[:, prev] = 0
+            prev = path[:, i - 1]
 
-        path.append((prev, initial_point))
+            get_path = self.choose_node(unvisited, self.pheromones[prev], self.distances[prev, :], prev)
+            unvisited[:, get_path] = 0
+            path[:, i] = get_path
 
+        path[:,-1] = initial_point #return back to the starting city
         return path
 
-    def choose_node(self, unvisited, pheromones, distance):
-        collection = []
-        for loc, i in enumerate(unvisited[0]):
-            if i == 1:
-                prob = pheromones[loc] ** self.alpha * (1/distance[loc]) ** self.beta
-                collection.append(prob)
-            else:
-                collection.append(0)
-        collection = np.array(collection)
-        collection /= collection.sum()
+    def choose_node(self, unvisited, pheromones, distance, current_node):
+        probability = np.zeros((1,unvisited.shape[1]))
 
-        decision = rand_choice_nb(list(range(len(unvisited[0]))), collection)
+        for i in range(unvisited.shape[1]):
+            if distance[:, i] !=0 and unvisited[:, i] !=0:
+                probability[:, i] = pheromones[:, i] ** self.alpha * (1 / distance[:, i]) ** self.beta
+            else:
+                probability[:, i] = 0
+
+        probability /= probability.sum()
+
+        decision = rand_choice_nb(np.arange(len(unvisited[0])), probability[0])
+
         return decision
 
     def update_pheromones(self, ants_paths):
-        # Evaporation step
         self.pheromones *= (1 - self.rho)
+        for i in range(0, ants_paths.shape[0]):
+            for j in range(0, ants_paths.shape[1] - 2):
+                path_current = int(ants_paths[i, j + 1])
+                path_prev = int(ants_paths[i, j])
 
-        # Pheromone deposit step
-        for path in ants_paths:
-            for edge in path[0]:
-                self.pheromones[edge] += self.Q / path[1]
+                self.pheromones[path_prev, path_current] += self.Q/ants_paths[i, -1]
+
 
     def path_dist(self, path):
         total = 0
-        for edge in path:
-            total += self.distances[edge]
+        for i in range(path.shape[1] - 1):
+            a = path[0, i]
+            b = path[0, i+1]
+            total += self.distances[a, b]
 
         return total
 
@@ -100,13 +109,13 @@ class AntColony:
 
         for i in range(self.n_iterations):
             all_paths = self.gen_paths()
-
             self.update_pheromones(all_paths)
 
-            current_shortest = sorted(all_paths, key=lambda x: x[1])[0]
 
-            if current_shortest[1] < shortest:
-                shortest = current_shortest[1]
+            current_shortest = sorted(all_paths[:, -1])[0]
+
+            if current_shortest < shortest:
+                shortest = current_shortest
                 print(f'Current shortest path:', shortest)
 
         return shortest
@@ -114,15 +123,15 @@ class AntColony:
 
 
 
-tsplib_file = "att48.tsp"
+tsplib_file = "ACO/att48.tsp"
 distance_matrix = tsplib_distance_matrix(tsplib_file)
 distance_matrix = np.array(distance_matrix, dtype=np.float64)
 
 aco = AntColony(
     distances=distance_matrix,
-    n_ants=48,
-    n_iterations=5000,
-    alpha=2,
+    n_ants=100,
+    n_iterations=1000,
+    alpha=1,
     beta=3,
     rho=0.1,
     Q=0.5,
