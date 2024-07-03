@@ -1,5 +1,15 @@
-import threading
-
+###########################################################################################################
+####################################To do list ############################################################
+##                     Need to add dynamics for pheremone diffusion
+##                     Add different hyperparameters for each colony
+##                     Implement an inital pheremone stratergy
+##
+##
+##
+##
+##
+##
+##
 import numpy as np
 import numba as nb
 import random
@@ -20,6 +30,8 @@ spec = [
     ('initial_pheromone', nb.float64),
     ('pheromones', nb.float64[:, :, :]),
     ('n_cities', nb.int64),
+    ('probability', nb.float64[:, :]),
+    ('inverse_distances', nb.float64[:, :]),
 ]
 
 
@@ -34,10 +46,11 @@ def rand_choice_nb(arr, prob):
     return arr[a]
 
 
-# @nb.experimental.jitclass(spec)
+@nb.experimental.jitclass(spec)
 class CoAntColony():
     """
-    :param n_ants: Number of ants.
+    :param n_ants: Number of ants in each colony.
+    :param n_colony: Number of sub colonies.
     :param alpha: Alpha value.
     :param beta: Beta value.
     :param rho: Rho value.
@@ -64,7 +77,7 @@ class CoAntColony():
         # precompute inverse distance for better efficiency
         self.inverse_distances = np.zeros_like(self.distances)
         mask = self.distances != 0
-        self.inverse_distances[mask] = 1.0 / self.distances[mask]
+        self.inverse_distances = np.where(mask != 0, 1 / self.distances, 0)
 
     def gen_paths(self, colony_idx):
         paths = np.zeros((self.n_ants, self.n_cities + 2))  # extra entry for the distance column
@@ -97,11 +110,12 @@ class CoAntColony():
 
         return path
 
-    def choose_node(self, unvisited, pheromones, inverse_distances):
+    def choose_node(self, unvisited, pheromones, inverse_distances):  # needs further optimisation, bottleneck function
 
         probability = (pheromones ** self.alpha) * (inverse_distances ** self.beta)
-        probability = np.where(unvisited != 0, probability, 0)
+        probability = np.where(unvisited != 0, probability, 0)  # ignores visited entries
         probability /= probability.sum()
+
         return rand_choice_nb(np.arange(len(unvisited[0])), probability[0])
 
     def update_pheromones(self, ants_paths, colony_idx):
@@ -164,4 +178,3 @@ aco = CoAntColony(
 )
 
 best_solution = aco.run()
-
