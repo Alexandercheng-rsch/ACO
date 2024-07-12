@@ -78,40 +78,46 @@ class AntColony:
         return paths
 
     def construct_path(self):
-        path = np.zeros((self.drivers, self.customers + 3), dtype=np.float64)
+        path = np.full((self.drivers, self.customers + 3), dtype=np.float64, fill_value=np.nan)
         initial_point = 0
         unvisited = np.ones((1, len(self.distances)))
         unvisited[:, initial_point] = 0
+        path[:, -3] = 1
+        path[:, -2] = 0
+        path[:, -1] = 0
+        path[:, 0] = initial_point
+        while np.any(unvisited == 1):
+            for driver_idx in range(self.drivers):
+                rand = [random.randint(0, self.drivers-1) for _ in range(self.drivers)]
+                driver_idx = rand[driver_idx]
+                route_len = int(path[driver_idx, -3])
+                prev = int(path[driver_idx, route_len - 1])
 
-        route_len = 1
-
-        for driver_idx in range(self.drivers):
-            prev = initial_point
-            route_len = 1
-            if np.all(unvisited):
-                break
-
-            while True:
                 feasibility = np.array([(path[driver_idx, -2] + self.demand[idx]) <= self.capacity
                                for idx in range(0, len(self.distances))]).reshape(1, -1)
 
                 choose_city = self.choose_node(unvisited, self.pheromones[prev, :],
                                                self.distances[prev, :], feasibility)
-                prev = choose_city
-                if np.isnan(choose_city) or route_len > max_cities_per_driver:
+
+                if np.isnan(choose_city):
+                    if np.any(unvisited == 1):
+                        continue
                     break
 
-                path[driver_idx, route_len] = choose_city
+                path[driver_idx, route_len] = int(choose_city)
                 path[driver_idx, -2] += self.demand[choose_city]
-                route_len += 1
+                path[driver_idx, -3] += 1
                 unvisited[:, choose_city] = 0
+                path[driver_idx, -1] += self.path_dist([prev, choose_city])
 
-            path[driver_idx, -1] = self.path_dist(path[driver_idx, :route_len + 1])
-            path[driver_idx, -3] = route_len + 1
+        for i in range(self.drivers):
+            idx = int(path[i, -3])
+            path[i, idx] = initial_point
+            path[i, -1] += self.path_dist([int(path[i, idx - 1]), initial_point])
 
         return path
 
-    def choose_node(self, unvisited, pheromones, distance, feasibility):
+    def choose_node(self,  unvisited, pheromones, distance, feasibility):
 
         probability = np.where((distance != 0) & (unvisited != 0) & (feasibility != 0),
                                (pheromones ** self.alpha) * ((1 / distance) ** self.beta),
@@ -128,7 +134,7 @@ class AntColony:
         self.pheromones *= (1 - self.rho)  # decay
         for k in range(0, ants_paths.shape[2]):
             for i in range(0, ants_paths.shape[0]):
-                for j in range(0, int(ants_paths[i, -3, k] - 1)):
+                for j in range(0, int(ants_paths[i, -3, k])):
 
                     path_current = int(ants_paths[i, j + 1, k])
                     path_prev = int(ants_paths[i, j, k])
@@ -150,14 +156,19 @@ class AntColony:
 
         for i in range(self.n_iterations):
             all_paths = self.gen_paths()
-            self.update_pheromones(all_paths)
-
             summed = np.sum(all_paths[:, -1, :], axis=0)
-            idx = np.argmin(summed)
+            idx = np.argsort(summed)[:3]
 
-            if summed[idx] < shortest:
-                shortest = summed[idx]
-                shortest_route = all_paths[:, :, idx]
+            self.update_pheromones(all_paths[:, :, idx])
+            idxx = idx[0]
+            print(i)
+
+
+
+
+            if summed[idxx] < shortest:
+                shortest = summed[idxx]
+                shortest_route = all_paths[:, :, idxx]
                 print(f'Current shortest path:', shortest_route)
                 print(f'Current shortest distance:', shortest)
 
@@ -178,13 +189,13 @@ aco = AntColony(
     demand=demand,
     capacity=capacity,
     drivers=5,
-    n_ants=35,
+    n_ants=200,
     n_iterations=10000,
-    alpha=0.3,
-    beta=2,
-    rho=0.1,
-    Q=2,
-    initial_pheromone=0.2
+    alpha=1,
+    beta=3,
+    rho=0.01,
+    Q=1,
+    initial_pheromone=1/32
 )
 
 best_solution = aco.run()
