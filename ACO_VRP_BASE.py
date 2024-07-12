@@ -15,9 +15,11 @@ spec = [
     ('Q', nb.float64),
     ('initial_pheromone', nb.float64),
     ('pheromones', nb.float64[:, :]),
-    ('n_cities', nb.int64),
+    ('customers', nb.int64),
+    ('demand', nb.int64[:]),
+    ('drivers', nb.int64),
+    ('capacity', nb.int64),
 ]
-
 
 @nb.njit  # credit to some reddit user
 def rand_choice_nb(arr, prob):
@@ -30,7 +32,7 @@ def rand_choice_nb(arr, prob):
     return arr[a]
 
 
-# @nb.experimental.jitclass(spec)
+@nb.experimental.jitclass(spec)
 class AntColony:
     """
     :param n_ants: Number of ants.
@@ -64,7 +66,7 @@ class AntColony:
         self.initial_pheromone = initial_pheromone
         self.customers = distances.shape[0]  # assumption of symmetric distance matrix
         self.pheromones = np.full((self.customers, self.customers), initial_pheromone)
-        self.demand = demand
+        self.demand = demand.astype(np.int64)
         self.drivers = drivers
         self.capacity = capacity
 
@@ -103,12 +105,12 @@ class AntColony:
                     if np.any(unvisited == 1):
                         continue
                     break
-
-                path[driver_idx, route_len] = int(choose_city)
+                choose_city = int(choose_city)
+                path[driver_idx, route_len] = choose_city
                 path[driver_idx, -2] += self.demand[choose_city]
                 path[driver_idx, -3] += 1
                 unvisited[:, choose_city] = 0
-                path[driver_idx, -1] += self.path_dist([prev, choose_city])
+                path[driver_idx, -1] += int(self.path_dist([prev, choose_city]))
 
         for i in range(self.drivers):
             idx = int(path[i, -3])
@@ -127,7 +129,7 @@ class AntColony:
             return np.NAN
         else:
             probability /= probability.sum()
-            return rand_choice_nb(np.arange(len(unvisited[0])), probability[0])
+            return int(rand_choice_nb(np.arange(len(unvisited[0])), probability[0]))
 
     def update_pheromones(self, ants_paths):
 
@@ -161,10 +163,6 @@ class AntColony:
 
             self.update_pheromones(all_paths[:, :, idx])
             idxx = idx[0]
-            print(i)
-
-
-
 
             if summed[idxx] < shortest:
                 shortest = summed[idxx]
@@ -195,7 +193,7 @@ aco = AntColony(
     beta=3,
     rho=0.01,
     Q=1,
-    initial_pheromone=1/32
+    initial_pheromone=0.02
 )
 
 best_solution = aco.run()
