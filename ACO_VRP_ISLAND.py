@@ -2,11 +2,12 @@ import numpy as np
 import numba as nb
 import random
 from ACO.read_file import tsplib_distance_matrix
+from ACO.sweep import SweepAlgorithm
 import time
 
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
 spec = [
-    ('distances', nb.float64[:, :]),
+    ('distances', nb.float64[:,:]),
     ('n_ants', nb.int64),
     ('n_iterations', nb.int64),
     ('alpha', nb.float64),
@@ -14,11 +15,14 @@ spec = [
     ('rho', nb.float64),
     ('Q', nb.float64),
     ('initial_pheromone', nb.float64),
-    ('pheromones', nb.float64[:, :]),
+    ('pheromones', nb.float64[:,:]),
     ('customers', nb.int64),
     ('demand', nb.int64[:]),
     ('drivers', nb.int64),
     ('capacity', nb.int64),
+    ('edge_coord', nb.float64[:,:]),
+    ('sweep', nb.float64[:,:]),
+    ('tau_max', nb.int64)
 ]
 
 @nb.njit  # credit to some reddit user
@@ -46,6 +50,7 @@ class AntColony:
     """
     def __init__(self,
                  distances,
+                 edge_coord,
                  demand,
                  drivers,
                  capacity,
@@ -69,9 +74,12 @@ class AntColony:
         self.demand = demand.astype(np.int64)
         self.drivers = drivers
         self.capacity = capacity
+        self.edge_coord = edge_coord
+        self.sweep = SweepAlgorithm(self.edge_coord, self.demand, self.capacity, self.drivers).cluster()
+        self.tau_max = 1
 
     def gen_paths(self):
-        paths = np.zeros((self.drivers, self.customers + 3, self.n_ants), dtype=np.float64)  # extra entries for the distance column and capacity
+        paths = paths = np.zeros((self.drivers, self.customers + 3, self.n_ants), dtype=np.float64)  # extra entries for the distance column and capacity
         for i in range(0, self.n_ants):
             path = self.construct_path()
 
@@ -80,67 +88,118 @@ class AntColony:
         return paths
 
     def construct_path(self):
-        path = np.full((self.drivers, self.customers + 3), dtype=np.float64, fill_value=np.nan)
+        sweep = self.sweep
+        path = np.full((self.drivers, self.customers + 3), np.nan)
         initial_point = 0
-        unvisited = np.ones((1, len(self.distances)))
-        unvisited[:, initial_point] = 0
-        path[:, -3] = 1
-        path[:, -2] = 0
-        path[:, -1] = 0
-        path[:, 0] = initial_point
-        while np.any(unvisited == 1):
+        unvisited = np.ones(len(self.distances), dtype=np.bool_)
+        unvisited[initial_point] = False
+
+
+        for d in range(self.drivers):
+            path[d, -3] = 1  # route length
+            path[d, -2] = 0  # current capacity
+            path[d, -1] = 0  # total distance
+            path[d, 0] = initial_point
+
+        while np.any(unvisited):
+
             for driver_idx in range(self.drivers):
-                rand = [random.randint(0, self.drivers-1) for _ in range(self.drivers)]
-                driver_idx = rand[driver_idx]
+                driver_idx = np.random.randint(0, self.drivers)
                 route_len = int(path[driver_idx, -3])
                 prev = int(path[driver_idx, route_len - 1])
 
-                feasibility = np.array([(path[driver_idx, -2] + self.demand[idx]) <= self.capacity
-                               for idx in range(0, len(self.distances))]).reshape(1, -1)
+                feasibility1 = np.array([(path[driver_idx, -2] + self.demand[idx]) <= self.capacity
+                                         for idx in range(len(self.distances))])
+                feasibility2 = np.zeros(len(self.distances), dtype=np.bool_)
 
-                choose_city = self.choose_node(unvisited, self.pheromones[prev, :],
-                                               self.distances[prev, :], feasibility)
+                sweep_indices = np.zeros(3, dtype=np.int64)
+                if 0 < driver_idx < self.drivers - 1:
+                    sweep_indices = np.array([driver_idx - 1, driver_idx, driver_idx + 1])
+                elif driver_idx == 0:
+                    sweep_indices = np.array([driver_idx, driver_idx + 1, self.drivers - 1])
+                else:  # driver_idx == self.drivers - 1
+                    sweep_indices = np.array([driver_idx - 1, 0, driver_idx])
 
-                if np.isnan(choose_city):
-                    if np.any(unvisited == 1):
+                # Shuffle all indices
+                for i in range(len(sweep_indices)):
+                    j = np.random.randint(i, len(sweep_indices))
+                    sweep_indices[i], sweep_indices[j] = sweep_indices[j], sweep_indices[i]
+
+                for sweep_idx in sweep_indices:
+                    for j in range(1, int(sweep[sweep_idx, -3] + 1)):
+                        city = int(sweep[sweep_idx, j])
+                        if city != 0:
+                            feasibility2[city] = True
+
+                cluster = np.where(np.logical_and(feasibility1, feasibility2))[0]
+                cluster = cluster[cluster != 0]
+
+                if len(cluster) == 0:
+                    continue
+
+                choose_city = self.choose_node(unvisited, self.pheromones[prev],
+                                               self.distances[prev], feasibility1)
+
+                if choose_city == -1:
+                    if np.any(unvisited):
                         continue
                     break
-                choose_city = int(choose_city)
+
                 path[driver_idx, route_len] = choose_city
                 path[driver_idx, -2] += self.demand[choose_city]
                 path[driver_idx, -3] += 1
-                unvisited[:, choose_city] = 0
-                path[driver_idx, -1] += int(self.path_dist([prev, choose_city]))
+                unvisited[choose_city] = False
+                path[driver_idx, -1] += self.distances[prev, choose_city]
+
 
         for i in range(self.drivers):
             idx = int(path[i, -3])
             path[i, idx] = initial_point
-            path[i, -1] += self.path_dist([int(path[i, idx - 1]), initial_point])
+            path[i, -1] += self.distances[int(path[i, idx - 1]), initial_point]
+
+
 
         return path
+    def choose_node(self, unvisited, pheromones, distance, feasibility1):
+        feasible_unvisited = np.logical_and(unvisited, feasibility1)
 
-    def choose_node(self,  unvisited, pheromones, distance, feasibility):
+        if not np.any(feasible_unvisited):
+            return -1
 
-        probability = np.where((distance != 0) & (unvisited != 0) & (feasibility != 0),
-                               (pheromones ** self.alpha) * ((1 / distance) ** self.beta),
-                               0)
+        probabilities = np.zeros_like(pheromones)
+        feasible_indices = np.where(feasible_unvisited)[0]
 
-        if np.sum(probability) == 0:
-            return np.NAN
-        else:
-            probability /= probability.sum()
-            return int(rand_choice_nb(np.arange(len(unvisited[0])), probability[0]))
+        for i in feasible_indices:
+            probabilities[i] = pheromones[i] ** self.alpha * (1.0 / distance[i]) ** self.beta
+
+        total = np.sum(probabilities)
+        if total == 0:
+            return -1
+
+        probabilities /= total
+
+        r = np.random.random()
+        cum_prob = 0
+        for i in feasible_indices:
+            cum_prob += probabilities[i]
+            if r <= cum_prob:
+                return i
+
+        return feasible_indices[-1]
 
     def update_pheromones(self, ants_paths):
 
         self.pheromones *= (1 - self.rho)  # decay
         for k in range(0, ants_paths.shape[2]):
             for i in range(0, ants_paths.shape[0]):
-                for j in range(0, int(ants_paths[i, -3, k])):
+                for j in range(0, int(ants_paths[i, -3, k] - 1) + 1):
 
                     path_current = int(ants_paths[i, j + 1, k])
                     path_prev = int(ants_paths[i, j, k])
-                    self.pheromones[path_prev, path_current] += self.Q / ants_paths[i, -1, k]  # update pheromone
+                    self.pheromones[path_prev, path_current] +=  np.exp(self.pheromones[path_prev, path_current] / self.tau_max)/ self.path_dist([path_prev, path_current])  # update pheromone
+
+
+
 
     def path_dist(self, path):
         total = 0.0
@@ -159,16 +218,17 @@ class AntColony:
         for i in range(self.n_iterations):
             all_paths = self.gen_paths()
             summed = np.sum(all_paths[:, -1, :], axis=0)
-            idx = np.argsort(summed)[:3]
+            idx = np.argsort(summed)[:2]
 
             self.update_pheromones(all_paths[:, :, idx])
             idxx = idx[0]
-            print(i)
             if summed[idxx] < shortest:
                 shortest = summed[idxx]
                 shortest_route = all_paths[:, :, idxx]
                 print(f'Current shortest path:', shortest_route)
                 print(f'Current shortest distance:', shortest)
+                self.tau_max = 1/(shortest * self.rho)
+                print(i)
 
         return shortest, shortest_route
 
@@ -181,9 +241,11 @@ re = vrplib.read_instance(file)
 demand = re['demand']
 distance_matrix = re['edge_weight']
 capacity = re['capacity']
+edge_coord = np.array(re['node_coord'], dtype=np.float64)
 
 aco = AntColony(
     distances=distance_matrix,
+    edge_coord=edge_coord,
     demand=demand,
     capacity=capacity,
     drivers=5,
@@ -193,8 +255,13 @@ aco = AntColony(
     beta=3,
     rho=0.01,
     Q=1,
-    initial_pheromone=0.02
+    initial_pheromone=1/32
 )
 
 best_solution = aco.run()
 
+
+#
+# sweep = SweepAlgorithm(re['node_coord'], demand)
+# sweep.cluster()
+#
