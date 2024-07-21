@@ -88,29 +88,66 @@ class AntColony:
         path[:, -2] = 0
         path[:, -1] = 0
         path[:, 0] = initial_point
+        test = 0
         while np.any(unvisited == 1):
             for driver_idx in range(self.drivers):
+
                 rand = [random.randint(0, self.drivers-1) for _ in range(self.drivers)]
                 driver_idx = rand[driver_idx]
+
+                # if 0 < driver_idx < self.drivers - 2:
+                #     cluster_idx = [driver_idx - 1, driver_idx, driver_idx + 1]
+                # elif driver_idx == self.drivers - 1:
+                #     cluster_idx = [driver_idx - 1, 0, driver_idx]
+                # else:
+                #     cluster_idx = [self.drivers - 1, driver_idx, driver_idx + 1]
+                nearest_cluster = np.zeros((1, len(self.distances)))
+                ind = 0
+                # for cluster in cluster_idx:
+                #     idx = self.sweep[cluster, -3].astype(np.int64).item()
+                #     stuff = self.sweep[cluster, 1:idx + 1]
+                #     stuff = np.array([int(itemz) for item in stuff for itemz in item], dtype=np.int64)
+                #     # if ind != 1:
+                #     #     stuff = rand_choice_nb_multiple(stuff, random.randint(0, len(stuff)))
+                #     # ind += 1
+                #     for idx in stuff:
+                #         nearest_cluster[:, idx] = 1
+
                 route_len = int(path[driver_idx, -3])
                 prev = int(path[driver_idx, route_len - 1])
 
                 feasibility = np.array([(path[driver_idx, -2] + self.demand[idx]) <= self.capacity
                                for idx in range(0, len(self.distances))]).reshape(1, -1)
 
+                # feasibility = np.where((nearest_cluster != 0) & (feasibility != 0), 1, 0)
                 choose_city = self.choose_node(unvisited, self.pheromones[prev, :],
                                                self.distances[prev, :], feasibility)
 
+
                 if np.isnan(choose_city):
                     if np.any(unvisited == 1):
+                        test += 1
                         continue
                     break
+                if choose_city != np.nan:
+                    test = 0
                 choose_city = int(choose_city)
                 path[driver_idx, route_len] = choose_city
                 path[driver_idx, -2] += self.demand[choose_city]
                 path[driver_idx, -3] += 1
                 unvisited[:, choose_city] = 0
                 path[driver_idx, -1] += int(self.path_dist([prev, choose_city]))
+
+            if test > 100:
+                test = 0
+                path = np.full((self.drivers, self.customers + 3), dtype=np.float64, fill_value=np.nan)
+                initial_point = 0
+                unvisited = np.ones((1, len(self.distances)))
+                unvisited[:, initial_point] = 0
+                path[:, -3] = 1
+                path[:, -2] = 0
+                path[:, -1] = 0
+                path[:, 0] = initial_point
 
         for i in range(self.drivers):
             idx = int(path[i, -3])
@@ -163,7 +200,7 @@ class AntColony:
 
             self.update_pheromones(all_paths[:, :, idx])
             idxx = idx[0]
-            print(i)
+
             if summed[idxx] < shortest:
                 shortest = summed[idxx]
                 shortest_route = all_paths[:, :, idxx]
@@ -176,7 +213,7 @@ class AntColony:
 tsplib_file = "ACO/att48.tsp"
 
 import vrplib
-file = 'ACO/A-n32-k5.vrp'
+file = 'ACO/A-n80-k10.vrp'
 re = vrplib.read_instance(file)
 demand = re['demand']
 distance_matrix = re['edge_weight']
@@ -186,9 +223,9 @@ aco = AntColony(
     distances=distance_matrix,
     demand=demand,
     capacity=capacity,
-    drivers=5,
+    drivers=10,
     n_ants=200,
-    n_iterations=10000,
+    n_iterations=20000,
     alpha=1,
     beta=3,
     rho=0.01,
