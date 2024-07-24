@@ -1,12 +1,12 @@
 import numpy as np
 import numba as nb
 import random
-from ACO_TSP.read_file import tsplib_distance_matrix
+from read_file import tsplib_distance_matrix
 import time
-from ACO_TSP.path_construction import gen_paths, twoopt, intraswap
-from ACO_TSP.sweep import SweepAlgorithm
+from path_construction import gen_paths, twoopt, intraswap
 from numba import njit, prange
 import optuna
+
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
 
 
@@ -218,25 +218,92 @@ distance_matrix = re['edge_weight']
 capacity = re['capacity']
 edge_coord = np.array(re['node_coord'], dtype=np.float64)
 
-aco = AntColony(
-    distances=distance_matrix,
-    demand=demand,
-    capacity=capacity,
-    drivers=10,
-    n_ants=150,
-    n_iterations=5,
-    alpha=2,
-    beta=3,
-    gamma=2,
-    rho=0.05,
-    Q=1,
-    colonies=10,
-    exchange_rate=100,
-    master_colony_update_rate=200,
-    initial_pheromone=1.0,
-    colony_rebirth_limit=1500
-)
+# aco = AntColony(
+#     distances=distance_matrix,
+#     demand=demand,
+#     capacity=capacity,
+#     drivers=10,
+#     n_ants=150,
+#     n_iterations=5,
+#     alpha=2,
+#     beta=3,
+#     gamma=2,
+#     rho=0.05,
+#     Q=1,
+#     colonies=10,
+#     exchange_rate=100,
+#     master_colony_update_rate=200,
+#     initial_pheromone=1.0,
+#     colony_rebirth_limit=1500
+# )
 
-best_solution = aco.run()
+# best_solution = aco.run()
 
 
+def objective(trial):
+    # Define the parameters to optimize
+    n_ants = trial.suggest_int('n_ants', 100, 100)
+    alpha = trial.suggest_float('alpha', 0.5, 5)
+    beta = trial.suggest_float('beta', 1, 5)
+    gamma = trial.suggest_float('gamma', 1, 5)
+    rho = trial.suggest_float('rho', 0.01, 0.06)
+    colonies = trial.suggest_int('colonies', 5, 20)
+    exchange_rate = trial.suggest_int('exchange_rate', 20, 200)
+    master_colony_update_rate = trial.suggest_int('master_colony_update_rate', 1, 500)
+    colony_rebirth_limit = trial.suggest_int('colony_rebirth_limit', 20, 2000)
+    l = []
+    trials = 5
+    for _ in range(trials):
+        print(_)
+        aco = AntColony(
+            distances=distance_matrix,
+            demand=demand,
+            capacity=capacity,
+            drivers=10,
+            n_ants=n_ants,
+            n_iterations=3500,  # You might want to reduce this for optimization
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            rho=rho,
+            Q=1,
+            colonies=colonies,
+            exchange_rate=exchange_rate,
+            master_colony_update_rate=master_colony_update_rate,
+            initial_pheromone=1.0,
+            colony_rebirth_limit=colony_rebirth_limit
+        )
+        best_solution, _ = aco.run()
+        l.append(best_solution)
+    std = np.std(l)
+    mean = np.mean(l)
+    return mean + std
+
+if __name__ == "__main__":
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=1000, n_jobs=5)  # -1 uses all available cores
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print("  Value: ", trial.value)
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))
+
+    print("\nParameter Performance:")
+    for param_name in study.best_params.keys():
+        values = []
+        scores = []
+        for trial in study.trials:
+            if param_name in trial.params:
+                values.append(trial.params[param_name])
+                scores.append(trial.value)
+
+        param_values, param_scores = zip(*sorted(zip(values, scores)))
+
+        print("\n  {}:".format(param_name))
+        print("    Best value: {}".format(study.best_params[param_name]))
+        print("    Value range: {} to {}".format(min(param_values), max(param_values)))
+        print("    Best 3 values: {}".format(param_values[:3]))
+        print("    Corresponding scores: {}".format(param_scores[:3]))

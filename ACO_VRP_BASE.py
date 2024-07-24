@@ -1,7 +1,7 @@
 import numpy as np
 import numba as nb
 import random
-from ACO.read_file import tsplib_distance_matrix
+from ACO_TSP.read_file import tsplib_distance_matrix
 import time
 
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
