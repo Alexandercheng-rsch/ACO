@@ -116,17 +116,24 @@ class AntColony:
         return colony_best_fitness, best_colony_route
 
     def exchange_information(self, best_paths, best_routes):
-
-        colonies = list(range(self.colonies + 1))
+        colonies = list(range(self.colonies))
         res = []
+
+        # Exchange information between random pairs
         while len(colonies) > 1:
             i = colonies.pop(random.randint(0, len(colonies) - 1))
             j = colonies.pop(random.randint(0, len(colonies) - 1))
             res.append([i, j])
 
-        for i in res:
-            self.update_pheromones(best_paths[:, :, i[1]], i[0], best_routes)
-            self.update_pheromones(best_paths[:, :, i[0]], i[1], best_routes)
+        # Add exchanges between the last index and all others
+        last_index = self.colonies
+        for i in range(self.colonies):
+            res.append([i, last_index])
+
+        # Perform the information exchange
+        for i, j in res:
+            self.update_pheromones(best_paths[:, :, j], i, best_routes)
+            self.update_pheromones(best_paths[:, :, i], j, best_routes)
 
     def update_master_colony(self, colony_fitness):
         total = np.sum(colony_fitness[:, :-1])
@@ -211,24 +218,24 @@ distance_matrix = re['edge_weight']
 capacity = re['capacity']
 edge_coord = np.array(re['node_coord'], dtype=np.float64)
 
-aco = AntColony(
-    distances=distance_matrix,
-    demand=demand,
-    capacity=capacity,
-    drivers=10,
-    n_ants=150,
-    n_iterations=5,
-    alpha=2,
-    beta=3,
-    gamma=2,
-    rho=0.05,
-    Q=1,
-    colonies=10,
-    exchange_rate=100,
-    master_colony_update_rate=200,
-    initial_pheromone=1.0,
-    colony_rebirth_limit=1500
-)
+# aco = AntColony(
+#     distances=distance_matrix,
+#     demand=demand,
+#     capacity=capacity,
+#     drivers=10,
+#     n_ants=150,
+#     n_iterations=5,
+#     alpha=2,
+#     beta=3,
+#     gamma=2,
+#     rho=0.05,
+#     Q=1,
+#     colonies=10,
+#     exchange_rate=100,
+#     master_colony_update_rate=200,
+#     initial_pheromone=1.0,
+#     colony_rebirth_limit=1500
+# )
 
 # best_solution = aco.run()
 
@@ -243,28 +250,32 @@ def objective(trial):
     exchange_rate = trial.suggest_int('exchange_rate', 50, 200)
     master_colony_update_rate = trial.suggest_int('master_colony_update_rate', 100, 500)
     colony_rebirth_limit = trial.suggest_int('colony_rebirth_limit', 500, 3000)
-
-    aco = AntColony(
-        distances=distance_matrix,
-        demand=demand,
-        capacity=capacity,
-        drivers=10,
-        n_ants=n_ants,
-        n_iterations=3500,  # You might want to reduce this for optimization
-        alpha=alpha,
-        beta=beta,
-        gamma=gamma,
-        rho=rho,
-        Q=1,
-        colonies=colonies,
-        exchange_rate=exchange_rate,
-        master_colony_update_rate=master_colony_update_rate,
-        initial_pheromone=1.0,
-        colony_rebirth_limit=colony_rebirth_limit
-    )
-
-    best_solution, _ = aco.run()
-    return best_solution
+    l = []
+    trials = 30
+    for _ in range(trials):
+        aco = AntColony(
+            distances=distance_matrix,
+            demand=demand,
+            capacity=capacity,
+            drivers=10,
+            n_ants=n_ants,
+            n_iterations=1500,  # You might want to reduce this for optimization
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            rho=rho,
+            Q=1,
+            colonies=colonies,
+            exchange_rate=exchange_rate,
+            master_colony_update_rate=master_colony_update_rate,
+            initial_pheromone=1.0,
+            colony_rebirth_limit=colony_rebirth_limit
+        )
+        best_solution, _ = aco.run()
+        l.append(best_solution)
+    std = np.std(l)
+    mean = np.mean(l)
+    return mean + std
 
 if __name__ == "__main__":
     study = optuna.create_study(direction='minimize')
