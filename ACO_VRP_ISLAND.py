@@ -5,40 +5,12 @@ from ACO.read_file import tsplib_distance_matrix
 import time
 from ACO.path_construction import gen_paths, twoopt, intraswap
 from ACO.sweep import SweepAlgorithm
-
+from numba import njit, prange
+import optuna
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
-spec = [
-    ('distances', nb.float64[:, :]),
-    ('n_ants', nb.int64),
-    ('n_iterations', nb.int64),
-    ('alpha', nb.float64),
-    ('beta', nb.float64),
-    ('rho', nb.float64),
-    ('Q', nb.float64),
-    ('initial_pheromone', nb.float64),
-    ('pheromones', nb.float64[:, :, :]),
-    ('customers', nb.int64),
-    ('demand', nb.int64[:]),
-    ('drivers', nb.int64),
-    ('capacity', nb.int64),
-    ('colonies', nb.int64),
-    ('exchange_rate', nb.int64)
-
-]
 
 
-@nb.njit  # credit to some reddit user
-def rand_choice_nb(arr, prob):
-    """
-    :param arr: A 1D numpy array of values to sample from.
-    :param prob: A 1D numpy array of probabilities for the given samples.
-    :return: A random sample from the given array with a given probability.
-    """
-    a = np.searchsorted(np.cumsum(prob), np.random.random(), side="right")
-    return arr[a]
-
-
-@nb.njit
+@njit
 def rand_choice_nb_multiple(arr, num_samples):
     """
     :param arr: A 1D numpy array of values to sample from.
@@ -53,7 +25,6 @@ def rand_choice_nb_multiple(arr, num_samples):
         temp_arr[idx] = temp_arr[-1]
         temp_arr = temp_arr[:-1]
     return result
-
 
 
 class AntColony:
@@ -78,9 +49,12 @@ class AntColony:
                  alpha,
                  beta,
                  rho,
+                 gamma,
                  Q,
                  colonies,
                  exchange_rate,
+                 master_colony_update_rate,
+                 colony_rebirth_limit,
                  initial_pheromone):
         self.distances = distances.astype(np.float64)
         self.n_ants = n_ants
@@ -95,9 +69,18 @@ class AntColony:
         self.drivers = drivers
         self.capacity = capacity
         self.colonies = colonies
+        self.gamma = gamma
         self.exchange_rate = exchange_rate
+        self.colony_rebirth_limit = colony_rebirth_limit
+        self.master_colony_update_rate = master_colony_update_rate
         self.pheromones = np.full((self.customers, self.customers, self.colonies + 1), initial_pheromone)
-    def update_pheromones(self, ants_paths, no_colonie):
+        self.iter_local_optima = np.full((1, self.colonies), 0)
+
+    def update_pheromones(self, ants_paths, no_colonie, best_routes):
+        if best_routes is None:
+            best_routes = np.full((1, self.colonies + 1), 1)
+        else:
+            pass
         if ants_paths.ndim == 2:
             ants_paths = ants_paths[:, :, np.newaxis]
 
@@ -107,18 +90,17 @@ class AntColony:
                 for j in range(0, int(ants_paths[i, -3, k])):
                     path_current = int(ants_paths[i, j + 1, k])
                     path_prev = int(ants_paths[i, j, k])
-                    self.pheromones[path_prev, path_current, no_colonie] += self.Q / ants_paths[i, -1, k]  # update
-                    self.pheromones[path_current, path_prev, no_colonie] += self.Q / ants_paths[i, -1, k]
-                    # pheromone
+                    self.pheromones[path_prev, path_current, no_colonie] += (
+                            self.Q / (ants_paths[i, -1, k] * 1/(best_routes[:, no_colonie])))  # update
 
-    def update_all_colonies(self, paths, same):
-        if same:
-            for i in range(self.colonies - 1):
-                self.update_pheromones(paths, i)
-        else:
-            for i in range(self.colonies - 1):
-                path = paths[:, :, i]
-                self.update_pheromones(path, i)
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def update_all_colonies(self, paths, best_routes):
+        for i in range(self.colonies + 1):
+            path = paths[:, :, i]
+            self.update_pheromones(path, i, best_routes)
+
     def get_colony_best_fitness(self, paths):
         colony_best_idx = np.zeros((1, self.colonies + 1))
         colony_best_fitness = np.zeros((1, self.colonies + 1))
@@ -132,79 +114,166 @@ class AntColony:
             colony_best_fitness[:, colony] = summed[smallest]
 
         return colony_best_fitness, best_colony_route
-    def exchange_information(self, best_paths):
-        res = [[i, i + 1 % self.colonies]
-               for i in range(self.colonies-1)]
+
+    def exchange_information(self, best_paths, best_routes):
+
+        colonies = list(range(self.colonies + 1))
+        res = []
+        while len(colonies) > 1:
+            i = colonies.pop(random.randint(0, len(colonies) - 1))
+            j = colonies.pop(random.randint(0, len(colonies) - 1))
+            res.append([i, j])
+
         for i in res:
-            self.update_pheromones(best_paths[:, :, i[1]], i[0])
-            self.update_pheromones(best_paths[:, :, i[0]], i[1])
+            self.update_pheromones(best_paths[:, :, i[1]], i[0], best_routes)
+            self.update_pheromones(best_paths[:, :, i[0]], i[1], best_routes)
 
     def update_master_colony(self, colony_fitness):
         total = np.sum(colony_fitness[:, :-1])
-        self.pheromones[:, :, -1] = 0
-
+        self.pheromones[:, :, -1] = 0  # Start from zero
         for col in range(self.colonies):
-            self.pheromones[:, :, -1] += np.clip((self.pheromones[:, :, col] * colony_fitness[:, col])/total, 0, 1)
-        min_ = np.min(self.pheromones[:, :, -1])
-        max_ = np.max(self.pheromones[:, :, -1])
-        self.pheromones[:, :, -1] = (self.pheromones[:, :, -1] - min_) / (max_ - min_)
+            self.pheromones[:, :, -1] += (self.pheromones[:, :, col] * ((1 / (colony_fitness[:, col])) ** self.gamma) /
+                                          total)
 
+        sum_ = np.sum(self.pheromones[:, :, -1])
+        if sum_ > 0:
+            self.pheromones[:, :, -1] /= sum_
+
+    def colony_rebirth(self, colony_fitness):
+        colony_fitness = colony_fitness.squeeze()
+        sigma = np.std(colony_fitness[:-1])
+        max_ = max(colony_fitness[:-1])
+        min_ = min(colony_fitness[:-1])
+        diff = max_ - min_
+        idx = np.argsort(colony_fitness[:-1])
+        worst_colony = idx[-1]
+        observation = np.exp(-(abs(diff * sigma) / (self.iter_local_optima[:, worst_colony] *
+                                                    colony_fitness[worst_colony])))
+        if observation >= random.uniform(0, 1) and self.colonies >= 2:
+            print('rebirthed')
+            pick_colonies = rand_choice_nb_multiple(idx[:-1], 2)
+            self.pheromones[:, :,  worst_colony] = 0  #execution
+            total = np.sum(colony_fitness[pick_colonies])
+            for colony in pick_colonies:
+                self.pheromones[:, :, worst_colony] += (self.pheromones[:, :, colony] *
+                                                  ((1 / (colony_fitness[colony])) ** self.gamma) / total)
+
+            if total > 0:
+                self.pheromones[:, :, worst_colony] /= total
+            self.iter_local_optima[:, worst_colony] = 0
 
 
     def run(self):
         shortest = np.full((1, self.colonies + 1), np.inf)
         shortest_route = None
+        iter_local_optima = np.full((1, self.colonies + 1), 0)  # iterations stuck in local optima
         # for i in range(10):
         #     sweep = twoopt(sweep, self.distances)
         #     sweep = intraswap(sweep, self.demand, self.capacity, self.drivers, self.distances, False)
         # self.update_all_colonies(sweep[:,:,:,0], True)
         print('Started')
         for i in range(self.n_iterations):
-            print(i)
+            if i > 1:
+                if i % self.master_colony_update_rate == 0 or i == 2:
+                    self.update_master_colony(shortest)
 
-            if i > 2:
-                self.update_master_colony(shortest)
             all_paths = gen_paths(self.drivers, self.customers, self.pheromones, self.alpha, self.beta, self.rho,
-                                  self.n_ants, self.demand, self.capacity, self.distances, self.colonies + 1,False)
-            colony_fitness, colony_routes = self.get_colony_best_fitness(all_paths)
-            if i % self.exchange_rate == 0:
-                self.exchange_information(colony_routes)
-            else:
-                self.update_all_colonies(colony_routes, False)
-            for i in range(self.colonies + 1):
-                if colony_fitness[:, i].item() < shortest[:, i].item():
-                    shortest[:, i] = colony_fitness[:, i]
-                    print(shortest)
+                                  self.n_ants, self.demand, self.capacity, self.distances, self.colonies + 1, True)
 
-        return shortest, shortest_route
+            colony_fitness, colony_routes = self.get_colony_best_fitness(all_paths)
+
+            if i % self.exchange_rate == 0 and i != 0:
+                self.exchange_information(colony_routes, shortest_route)
+            else:
+                self.update_all_colonies(colony_routes, shortest_route)
+
+            self.iter_local_optima += 1
+
+            if i % self.colony_rebirth_limit == 0 and i != 0:
+                self.colony_rebirth(colony_fitness)
+            for j in range(self.colonies + 1):
+                if colony_fitness[:, j].item() < shortest[:, j].item():
+                    shortest[:, j] = colony_fitness[:, j]
+                    if j != self.colonies:
+                        self.iter_local_optima[:, j] = 0
+        a = min(shortest.squeeze())
+        return a, shortest_route
 
 
 tsplib_file = "ACO/att48.tsp"
 
 import vrplib
 
-file = 'ACO/A-n32-k5.vrp'
+file = 'ACO/A-n80-k10.vrp'
 re = vrplib.read_instance(file)
 demand = re['demand']
 distance_matrix = re['edge_weight']
 capacity = re['capacity']
 edge_coord = np.array(re['node_coord'], dtype=np.float64)
 
-
 aco = AntColony(
     distances=distance_matrix,
     demand=demand,
     capacity=capacity,
     drivers=10,
-    n_ants=20,
-    n_iterations=10000,
+    n_ants=150,
+    n_iterations=5,
     alpha=2,
     beta=3,
-    rho=0.8,
+    gamma=2,
+    rho=0.05,
     Q=1,
-    colonies=2,
-    exchange_rate=50,
-    initial_pheromone=1.0
+    colonies=10,
+    exchange_rate=100,
+    master_colony_update_rate=200,
+    initial_pheromone=1.0,
+    colony_rebirth_limit=1500
 )
 
-best_solution = aco.run()
+# best_solution = aco.run()
+
+def objective(trial):
+    # Define the parameters to optimize
+    n_ants = trial.suggest_int('n_ants', 50, 300)
+    alpha = trial.suggest_float('alpha', 0.5, 5.0)
+    beta = trial.suggest_float('beta', 1, 5)
+    gamma = trial.suggest_float('gamma', 1, 5)
+    rho = trial.suggest_float('rho', 0.01, 0.06)
+    colonies = trial.suggest_int('colonies', 5, 20)
+    exchange_rate = trial.suggest_int('exchange_rate', 50, 200)
+    master_colony_update_rate = trial.suggest_int('master_colony_update_rate', 100, 500)
+    colony_rebirth_limit = trial.suggest_int('colony_rebirth_limit', 500, 3000)
+
+    aco = AntColony(
+        distances=distance_matrix,
+        demand=demand,
+        capacity=capacity,
+        drivers=10,
+        n_ants=n_ants,
+        n_iterations=3500,  # You might want to reduce this for optimization
+        alpha=alpha,
+        beta=beta,
+        gamma=gamma,
+        rho=rho,
+        Q=1,
+        colonies=colonies,
+        exchange_rate=exchange_rate,
+        master_colony_update_rate=master_colony_update_rate,
+        initial_pheromone=1.0,
+        colony_rebirth_limit=colony_rebirth_limit
+    )
+
+    best_solution, _ = aco.run()
+    return best_solution
+
+if __name__ == "__main__":
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=1000)  # Adjust the number of trials as needed
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print("  Value: ", trial.value)
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))
