@@ -38,7 +38,7 @@ def path_dist(path, distances):
     return total
 
 @njit(parallel=True)
-def intraswap(ants_paths, demand, capacity, drivers, distances): #  just some swap algorithm which swaps to customers
+def intraswap(ants_paths, demand, capacity, drivers, distances, limit): #  just some swap algorithm which swaps to customers
     for k in range(ants_paths.shape[3]):
         for i in prange(ants_paths.shape[2]):
             ant_path = ants_paths[:, :, i, k].copy()
@@ -46,7 +46,7 @@ def intraswap(ants_paths, demand, capacity, drivers, distances): #  just some sw
             chosen_drivers = rand_choice_nb_multiple(np.arange(0, drivers), 2)
             driver1, driver2, = chosen_drivers[0], chosen_drivers[1]
             old = ants_paths[driver1, -1, i, k] + ants_paths[driver2, -1, i, k]
-            while timeout < 500:
+            while timeout < limit:
                 driverlen1 = int(ant_path[driver1, -3])
                 choose_cust1 = rand_choice_nb_multiple(np.arange(1, driverlen1), 1)
                 idx1 = int(ant_path[driver1, choose_cust1[0]])
@@ -88,17 +88,17 @@ def intraswap(ants_paths, demand, capacity, drivers, distances): #  just some sw
 
 
 @njit(parallel=True)
-def twoopt(path, distances):
+def twoopt(path, distances, limit):
     for k in range(path.shape[3]):
         for i in prange(path.shape[2]):
             for j in range(path.shape[0]):
                 length = int(path[j, -3, i, k])
                 pathz = path[j, :, i, k].copy()
-                limit = 0
+                timeout = 0
                 old = path[j, -3, i, k]
                 if length <= 3:  # Skip routes that are too short for 2-opt
                     continue
-                while limit < 500:
+                while timeout < limit:
                     idx = rand_choice_nb_multiple(np.arange(1, length), 2)
                     idx1, idx2 = int(min(idx)), int(max(idx))
 
@@ -112,13 +112,13 @@ def twoopt(path, distances):
                         path[j, :, i, k] = pathz
                         path[j, -1, i, k] = pathz[-1]
                         old = pathz[-1]
-                        limit = 0
-                    limit += 1
+                        timeout = 0
+                    timeout += 1
     return path
 
 
 @njit(parallel=True)
-def gen_paths(drivers, customers, pheromone, alpha, beta, rho, n_ants, demand, capacity, distance, colonies, optimise):
+def gen_paths(drivers, customers, pheromone, alpha, beta, rho, n_ants, demand, capacity, distance, colonies, limit, optimise):
     paths = np.zeros((drivers, customers + 3, n_ants, colonies), dtype=np.float64)
     for k in range(colonies):
         for i in prange(n_ants):
@@ -126,8 +126,8 @@ def gen_paths(drivers, customers, pheromone, alpha, beta, rho, n_ants, demand, c
                                   capacity)
             paths[:, :, i, k] = path
     if optimise:
-        paths = twoopt(paths, distance)
-        paths = intraswap(paths, demand, capacity, drivers, distance)
+        paths = twoopt(paths, distance, limit)
+        paths = intraswap(paths, demand, capacity, drivers, distance, limit)
     return paths
 
 @njit
@@ -141,12 +141,14 @@ def construct_path(drivers, customers, pheromone, alpha, beta, rho, n_ants, dist
     path[:, -1] = 0
     path[:, 0] = initial_point
     patience = 0
+    failed = 0
 
     while np.any(unvisited == 1):
 
         for driver_idx in range(drivers):
-            rand = [random.randint(0, drivers-1) for _ in range(drivers)]
-            driver_idx = rand[driver_idx]
+            if failed < 50:
+                rand = [random.randint(0, drivers-1) for _ in range(drivers)]
+                driver_idx = rand[driver_idx]
             route_len = int(path[driver_idx, -3])
             prev = int(path[driver_idx, route_len - 1])
 
@@ -168,6 +170,7 @@ def construct_path(drivers, customers, pheromone, alpha, beta, rho, n_ants, dist
                     path[:, -1] = 0
                     path[:, 0] = initial_point
                     patience = 0
+                    failed += 1
                 elif np.any(unvisited == 1):
                     patience += 1
                     continue
@@ -180,7 +183,6 @@ def construct_path(drivers, customers, pheromone, alpha, beta, rho, n_ants, dist
             path[driver_idx, -3] += 1
             unvisited[:, choose_city] = 0
             path[driver_idx, -1] += int(path_dist([prev, choose_city], distances))
-
     for i in range(drivers):
         idx = int(path[i, -3])
         path[i, idx] = initial_point

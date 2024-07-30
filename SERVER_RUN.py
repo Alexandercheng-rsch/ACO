@@ -1,11 +1,13 @@
 import numpy as np
 import numba as nb
 import random
-from read_file import tsplib_distance_matrix
+from ACO.read_file import tsplib_distance_matrix
 import time
-from path_construction import gen_paths, twoopt, intraswap
+from ACO.path_construction import gen_paths, twoopt, intraswap
+
 from numba import njit, prange
 import optuna
+np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
 
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
 
@@ -180,6 +182,7 @@ class AntColony:
         # self.update_all_colonies(sweep[:,:,:,0], True)
         print('Started')
         for i in range(self.n_iterations):
+            print(i)
             if i > 1:
                 if i % self.master_colony_update_rate == 0 or i == 2:
                     self.update_master_colony(shortest)
@@ -239,50 +242,97 @@ edge_coord = np.array(re['node_coord'], dtype=np.float64)
 
 # best_solution = aco.run()
 
+import os
+import json
+from datetime import datetime
+import pickle
+
+
+def save_everything(study, trial, save_dir, best_solution=None, trial_value=None):
+    os.makedirs(save_dir, exist_ok=True)
+
+    trial_data = {
+        'number': trial.number,
+        'params': trial.params,
+        'value': trial_value,
+        'best_solution': best_solution
+    }
+
+    with open(os.path.join(save_dir, f'trial_{trial.number}.json'), 'w') as f:
+        json.dump(trial_data, f, indent=2)
+
+    # Save top 5 trials
+    top_trials = sorted(study.trials, key=lambda t: t.value if t.value is not None else float('inf'))[:5]
+    with open(os.path.join(save_dir, 'top_5_trials.json'), 'w') as f:
+        json.dump([{
+            'number': t.number,
+            'value': t.value,
+            'params': t.params
+        } for t in top_trials if t.value is not None], f, indent=2)
+
+    print(f"Results for trial {trial.number} saved in directory: {save_dir}")
+
 
 def objective(trial):
-    # Define the parameters to optimize
-    n_ants = trial.suggest_int('n_ants', 100, 100)
-    alpha = trial.suggest_float('alpha', 0.5, 5)
-    beta = trial.suggest_float('beta', 1, 5)
-    gamma = trial.suggest_float('gamma', 1, 5)
-    rho = trial.suggest_float('rho', 0.01, 0.06)
-    colonies = trial.suggest_int('colonies', 5, 20)
-    exchange_rate = trial.suggest_int('exchange_rate', 20, 200)
-    master_colony_update_rate = trial.suggest_int('master_colony_update_rate', 1, 500)
-    colony_rebirth_limit = trial.suggest_int('colony_rebirth_limit', 20, 2000)
-    l = []
-    trials = 5
-    for _ in range(trials):
-        print(_)
-        aco = AntColony(
-            distances=distance_matrix,
-            demand=demand,
-            capacity=capacity,
-            drivers=10,
-            n_ants=n_ants,
-            n_iterations=3500,  # You might want to reduce this for optimization
-            alpha=alpha,
-            beta=beta,
-            gamma=gamma,
-            rho=rho,
-            Q=1,
-            colonies=colonies,
-            exchange_rate=exchange_rate,
-            master_colony_update_rate=master_colony_update_rate,
-            initial_pheromone=1.0,
-            colony_rebirth_limit=colony_rebirth_limit
-        )
-        best_solution, _ = aco.run()
-        l.append(best_solution)
-    std = np.std(l)
-    mean = np.mean(l)
-    return mean + std
+    try:
+        n_ants = trial.suggest_int('n_ants', 100, 100)
+        alpha = trial.suggest_float('alpha', 0.5, 5)
+        beta = trial.suggest_float('beta', 1, 5)
+        gamma = trial.suggest_float('gamma', 1, 5)
+        rho = trial.suggest_float('rho', 0.01, 0.06)
+        colonies = trial.suggest_int('colonies', 5, 20)
+        exchange_rate = trial.suggest_int('exchange_rate', 20, 200)
+        master_colony_update_rate = trial.suggest_int('master_colony_update_rate', 1, 500)
+        colony_rebirth_limit = trial.suggest_int('colony_rebirth_limit', 20, 2000)
+
+        l = []
+        trials = 5
+        for _ in range(trials):
+            print(f"Trial {trial.number}, Run {_ + 1}")
+            aco = AntColony(
+                distances=distance_matrix,
+                demand=demand,
+                capacity=capacity,
+                drivers=10,
+                n_ants=n_ants,
+                n_iterations=3500,
+                alpha=alpha,
+                beta=beta,
+                gamma=gamma,
+                rho=rho,
+                Q=1,
+                colonies=colonies,
+                exchange_rate=exchange_rate,
+                master_colony_update_rate=master_colony_update_rate,
+                initial_pheromone=1.0,
+                colony_rebirth_limit=colony_rebirth_limit
+            )
+            best_solution, _ = aco.run()
+            l.append(best_solution)
+
+            std = np.std(l)
+            mean = np.mean(l)
+            result = mean + std
+
+            save_everything(study, trial, save_dir, best_solution=min(l), trial_value=result)
+
+            return result
+    except Exception as e:
+        print(f"An error occurred in trial {trial.number}: {str(e)}")
+        return float('inf')
 
 if __name__ == "__main__":
-    study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=1000, n_jobs=5)  # -1 uses all available cores
+    # Create a unique directory for this run
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = f"aco_optuna_results_{timestamp}"
 
+    # Create the study with in-memory storage
+    study = optuna.create_study(direction='minimize')
+
+    # Run the optimization
+    study.optimize(objective, n_trials=1000, n_jobs=3)  # Set n_jobs to 1 for sequential execution
+
+    print("\nOptimization completed.")
     print("Best trial:")
     trial = study.best_trial
 
@@ -291,19 +341,7 @@ if __name__ == "__main__":
     for key, value in trial.params.items():
         print("    {}: {}".format(key, value))
 
-    print("\nParameter Performance:")
-    for param_name in study.best_params.keys():
-        values = []
-        scores = []
-        for trial in study.trials:
-            if param_name in trial.params:
-                values.append(trial.params[param_name])
-                scores.append(trial.value)
+    # Save the final study results
+    save_everything(study, trial, save_dir)
 
-        param_values, param_scores = zip(*sorted(zip(values, scores)))
-
-        print("\n  {}:".format(param_name))
-        print("    Best value: {}".format(study.best_params[param_name]))
-        print("    Value range: {} to {}".format(min(param_values), max(param_values)))
-        print("    Best 3 values: {}".format(param_values[:3]))
-        print("    Corresponding scores: {}".format(param_scores[:3]))
+    print(f"\nAll results saved in directory: {save_dir}")
