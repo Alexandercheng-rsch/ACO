@@ -141,14 +141,11 @@ def construct_path(drivers, customers, pheromone, alpha, beta, rho, n_ants, dist
     path[:, -1] = 0
     path[:, 0] = initial_point
     patience = 0
-    failed = 0
-
     while np.any(unvisited == 1):
 
         for driver_idx in range(drivers):
-            if failed < 50:
-                rand = [random.randint(0, drivers-1) for _ in range(drivers)]
-                driver_idx = rand[driver_idx]
+            rand = [random.randint(0, drivers - 1) for _ in range(drivers)]
+            driver_idx = rand[driver_idx]
             route_len = int(path[driver_idx, -3])
             prev = int(path[driver_idx, route_len - 1])
 
@@ -170,7 +167,6 @@ def construct_path(drivers, customers, pheromone, alpha, beta, rho, n_ants, dist
                     path[:, -1] = 0
                     path[:, 0] = initial_point
                     patience = 0
-                    failed += 1
                 elif np.any(unvisited == 1):
                     patience += 1
                     continue

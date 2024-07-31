@@ -70,11 +70,7 @@ class AntColony:
                 for j in range(0, int(ants_paths[i, -3, k])):
                     path_current = int(ants_paths[i, j + 1, k])
                     path_prev = int(ants_paths[i, j, k])
-                    if self.exchanging:
-                        self.pheromones[path_prev, path_current, no_colonie] += self.Q / ants_paths[i, -1, k]
-                    else:
-                        self.pheromones[path_prev, path_current, no_colonie] += self.Q / ants_paths[i, -1, k]  # update
-
+                    self.pheromones[path_prev, path_current, no_colonie] += self.Q / ants_paths[i, -1, k]  # update
     def decay_pheromones(self, no_colonie):
         self.pheromones[:, :, no_colonie] *= (1 - self.rho)
 
@@ -114,13 +110,9 @@ class AntColony:
             self.pheromones[:, :, -1] += (self.pheromones[:, :, col] * ((1 / (colony_fitness[:, col])) ** self.gamma) /
                                           total)
 
-        # Alternative normalization method
         min_val = np.min(self.pheromones[:, :, -1])
         max_val = np.max(self.pheromones[:, :, -1])
-        if max_val > min_val:
-            self.pheromones[:, :, -1] = (self.pheromones[:, :, -1] - min_val) / (max_val - min_val)
-        else:
-            self.pheromones[:, :, -1] = np.ones_like(self.pheromones[:, :, -1]) / self.pheromones[:, :, -1].size
+        self.pheromones[:, :, -1] = (self.pheromones[:, :, -1] - min_val) / (max_val - min_val)
 
     def shuffle(self):
         indices_to_shuffle = np.arange(self.colonies)
@@ -134,6 +126,7 @@ class AntColony:
         shortest = np.full((1, self.colonies + 1), np.inf)
         shortest_route = np.zeros((self.drivers, self.customers + 3, self.colonies + 1), dtype=np.float64)
         limit = 500
+        rho = self.rho
         print('Started')
         for i in range(self.n_iterations):
             print(i)
@@ -152,8 +145,13 @@ class AntColony:
                     shortest[:, j] = colony_fitness[:, j]
                     shortest_route[:, :, j] = colony_routes[:, :, j]
                     print(shortest)
+            if i % (self.exchanging - 15) == 0:
+                self.rho = 0.01
             if i % self.exchange_rate == 0 and i > 1:
+                self.exchanging = True
                 self.exchange_information(shortest_route)
+                self.exchanging = False
+                self.rho = rho
             else:
                 self.update_all_colonies(colony_routes)
             if i % self.shuffle_it == 0:
@@ -186,11 +184,11 @@ aco = AntColony(
     alpha=2,
     beta=3,
     gamma=1.35,
-    rho=0.64,
+    rho=0.05,
     Q=1,
     colonies=8,
-    exchange_rate=500,
-    master_colony_update_rate=100,
+    exchange_rate=20,
+    master_colony_update_rate=150,
     initial_pheromone=1.0,
     shuffle_it=2500
 )
