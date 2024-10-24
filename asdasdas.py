@@ -1,14 +1,8 @@
 
 import time
-from ACO.path_construction import gen_paths
+from ACO.path_construction import gen_paths, path_dist
 import numpy as np
 np.set_printoptions(precision=20, suppress=True, threshold=np.inf)
-
-
-def dodge(matrix):
-    asd = matrix + matrix.transpose() ** 1e-50
-
-    return asd / 2
 
 
 class AntColony:
@@ -76,6 +70,7 @@ class AntColony:
         self.s_best = np.zeros((self.drivers, self.customers + 3, self.colonies + 1), dtype=np.float64)
         self.c_best = np.full((1, self.colonies + 1), np.inf)
         self.k_best = np.full((1, self.colonies + 1), np.inf)
+        self.true_dis = np.zeros(self.colonies + 1)
         self.counter = 0
         self.trigger = np.zeros((1, 2))
         self.pheromones_archive = np.full((self.customers, self.customers, self.colonies + 1), initial_pheromone)
@@ -88,6 +83,14 @@ class AntColony:
         self.exchanging = False
         self.boost = False
         self.optimal_result = optimal_result
+
+    def true_dist(self):
+        for k in range(0, self.s_best.shape[2]):
+            total = 0
+            for i in range(0, self.s_best.shape[0]):
+                length = int(self.s_best[i, -3, k])
+                total += path_dist(self.s_best[i, :length + 1, k], np.round(self.distances))
+            self.true_dis[k] = total
 
     def update_pheromones(self, ants_paths, no_colonie, consts=1.0):
         if no_colonie != self.colonies:  # evap for worker colony
@@ -114,7 +117,7 @@ class AntColony:
                             self.pheromones[path_prev, path_current, no_colonie] += (
                                     1 / (self.k_best[:, no_colonie]))
                     else:
-                        self.pheromones[path_prev, path_current, no_colonie] += (consts / np.sum(ants_paths[:, -1, k]))
+                        self.pheromones[path_prev, path_current, no_colonie] += (consts / ants_paths[i, -1, k])
 
         if np.any(self.updated == 1):
             which = np.where(self.updated == 1)
@@ -205,12 +208,12 @@ class AntColony:
         rank = np.argsort(colony_fitness[:, :-1]).squeeze()
         num_colonies = len(rank)
         for i, col in enumerate(rank):
-            if col !=0:
+            if col !=0 :
                 a = self.pheromones_archive[:, :, col] - np.min(self.pheromones_archive[:, :, col])
                 self.pheromones[:, :, -1] += (a * (((num_colonies - i) / num_colonies) ** self.gamma))
             else:
                 a = self.pheromones_archive[:, :, col] - np.min(self.pheromones_archive[:, :, col])
-                self.pheromones[:, :, -1] += (a * (((num_colonies - i) / num_colonies) ** 30))
+                self.pheromones[:, :, -1] += (a * (((num_colonies - i) / num_colonies) ** 10))
         sum_ = np.sum(self.pheromones[:, :, -1])
         self.pheromones[:, :, -1] = self.pheromones[:, :, -1] / sum_
 
@@ -223,15 +226,15 @@ class AntColony:
         all_paths1 = gen_paths(self.drivers, self.customers, self.pheromones[:, :, 0][:, :, np.newaxis], 1,
                                2.7
                                , self.rho, self.n_ants, self.demand, self.capacity,
-                               self.distances, limit_1, limit_2, self.boost, False, False)
+                               self.distances, limit_1, limit_2, self.boost, True, True)
         all_paths2 = gen_paths(self.drivers, self.customers, self.pheromones[:, :, 1:-1], self.alpha, self.beta,
                                self.rho, self.n_ants, self.demand, self.capacity,
                                self.distances,
-                               limit_1, limit_2, self.boost, False, False)
+                               limit_1, limit_2, self.boost, True, True)
         all_paths3 = gen_paths(self.drivers, self.customers, self.pheromones[:, :, -1][:, :, np.newaxis], self.alpha_c,
                                self.beta_c,
                                self.rho, self.n_ants, self.demand, self.capacity,
-                               self.distances, limitz_1, limitz_2, self.boost, False, False)
+                               self.distances, limitz_1, limitz_2, self.boost, True, True)
         all_paths = np.concatenate([all_paths1, all_paths2, all_paths3], axis=3)
         return all_paths
 
@@ -240,6 +243,18 @@ class AntColony:
         saved_best = None
         ass = np.zeros((2, self.n_iterations))
         for i in range(self.n_iterations):
+            print(i)
+            if i == self.initialise_master and i > 0:
+                self.boost = True
+                self.update_master_colony(self.c_best)
+            if self.trigger[:, 0] != 0:
+                self.trigger[:, 1] += 1
+                if self.trigger[:, 1] >= 5:
+                    self.trigger[:, :] = 0
+                    self.boost = False
+            if i % (self.initialise_master + 5) == 0 and i > 0:
+                self.boost = False
+
             all_paths = self.real_gen_path()
             self.k_best, colony_routes, best_list = self.get_colony_best_fitness(all_paths)
 
@@ -248,12 +263,19 @@ class AntColony:
                     self.c_best[:, j] = self.k_best[:, j]
                     self.s_best[:, :, j] = colony_routes[:, :, j]
                     self.updated[0, j] = 1
-                    print(self.c_best)
-
-            self.update_tau()
-            self.update_all_colonies(all_paths, best_list)
-            ass[0, i] = np.min(self.c_best[:, :-1])
-            ass[1, i] = self.c_best[:, -1]
+                    self.true_dist()
+                    print(self.true_dis)
+            if (i % self.exchange_rate == 0) and i > 0 or (
+                    self.counter > 0 and (self.exchange_rate - i) % 2 == 0 and i > 0):
+                if (i % self.exchange_rate == 0) and i > 0:
+                    saved_best = self.s_best
+                self.update_tau()
+                self.exchange_information(saved_best, colony_routes)
+            else:
+                self.update_tau()
+                self.update_all_colonies(all_paths, best_list)
+            ass[0, i] = np.min(self.true_dis[:-1])
+            ass[1, i] = self.true_dis[-1]
             kek = np.min(self.k_best.squeeze())
 
             # if np.round(kek) <= self.optimal_result:
@@ -261,10 +283,119 @@ class AntColony:
             #     print(np.round(kek))
             #     break
 
-        aaa = np.argsort(self.c_best.squeeze())[0]
-        best_fitness = self.c_best[:, 1].squeeze()
-        print(best_fitness)
-        best_route = self.s_best[:, :, 1]
-        print(best_route)
-        return best_fitness, best_route
+        # aaa = np.argsort(self.c_best.squeeze())[0]
+        # best_fitness = self.true_dis[:, aaa].squeeze()
+        # print(best_fitness)
+        # best_route = self.s_best[:, :, aaa]
+        # print(best_route)
+        return ass
 
+
+import vrplib
+
+# file = 'ACO/instances/A-n46-k7.vrp'
+# re = vrplib.read_instance(file)
+# demand = re['demand']
+# distance_matrix = re['edge_weight']
+# capacity = re['capacity']
+# edge_coord = np.array(re['node_coord'], dtype=np.float64)
+# aco = AntColony(
+#     distances=distance_matrix,
+#     demand=demand,
+#     capacity=capacity,
+#     drivers=6,
+#     n_ants=300,
+#     n_iterations=600,
+#     alpha=1.1,
+#     beta=2.7,
+#     alpha_c=1.1,
+#     beta_c=0.89,
+#     gamma=2.6, #5.2
+#     rho=0.58,
+#     rho_c=0.03,  # 34
+#     Q=1,
+#     colonies=8,
+#     exchange_rate=400,
+#     master_colony_update_rate=320,
+#     initial_pheromone=1.0,
+#     lemon=1,
+#     p_best=0.05,
+#     initialise_master=50,
+#     balance=0,
+#     optimal_result=None
+# )
+#
+# import time
+#
+# start_time = time.time()
+#
+# ass = aco.run()
+# np.save('A-n46-k7_iacomc', ass)
+
+
+def run_instance(instance_name):
+    file = f'ACO/instances/{instance_name}.vrp'
+    re = vrplib.read_instance(file)
+    demand = re['demand']
+    distance_matrix = re['edge_weight']
+    capacity = re['capacity']
+    edge_coord = np.array(re['node_coord'], dtype=np.float64)
+
+    # Extract the number of drivers from the instance name
+    drivers = int(instance_name.split('-k')[1])
+
+    aco = AntColony(
+        distances=distance_matrix,
+        demand=demand,
+        capacity=capacity,
+        drivers=drivers,  # Use the extracted number of drivers
+        n_ants=300,
+        n_iterations=600,
+        alpha=1.1,
+        beta=2.7,
+        alpha_c=1.1,
+        beta_c=0.89,
+        gamma=2.6,
+        rho=0.58,
+        rho_c=0.03,
+        Q=1,
+        colonies=8,
+        exchange_rate=400,
+        master_colony_update_rate=320,
+        initial_pheromone=1.0,
+        lemon=1,
+        p_best=0.05,
+        initialise_master=50,
+        balance=0,
+        optimal_result=None
+    )
+
+    start_time = time.time()
+    ass = aco.run()
+    end_time = time.time()
+
+    np.save(f'{instance_name}_iacomc', ass)
+
+    return end_time - start_time
+
+
+instances = [
+    'A-n33-k5',
+    'A-n33-k6',
+    'A-n46-k7',
+    'A-n48-k7',
+    'A-n55-k9',
+    'A-n60-k9',
+    'A-n63-k10',
+    'A-n69-k9',
+    'A-n80-k10'
+]
+for instance in instances:
+    print(f"Running instance: {instance}")
+    execution_time = run_instance(instance)
+    print(f"Completed instance: {instance}")
+    print(f"Execution time: {execution_time} seconds")
+    print(f"ASS saved to {instance}_iacomc.npy")
+    print("---")
+
+print("All instances completed.")
