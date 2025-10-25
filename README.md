@@ -2,7 +2,7 @@
 
 A novel hybrid algorithm for solving the Capacitated Vehicle Routing Problem (CVRP) using an innovative Master Colony mechanism combined with island-based parallel optimization.
 
-[View Full Dissertation](https://github.com/Alexandercheng-rsch/ACO/blob/main/Generic_Report_Template.pdf)
+
 
 ## Academic Project
 
@@ -210,7 +210,7 @@ The algorithm outputs:
 ```
 ┌─────────────────────────────────────────────┐
 │           Master Colony                     │
-│   (Aggregates pheromone matrices)          │
+│   (Aggregates pheromone matrices)           │
 │   • Traditional ACO variant                 │
 │   • Uses weighted colony matrices           │
 │   • Re-initialized every migration period   │
@@ -219,23 +219,23 @@ The algorithm outputs:
             ▼
 ┌───────────────────────────────────────────────┐
 │          Worker Colonies (8 islands)          │
-│  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐         │
-│  │ C1  │◄─┤ C2  │◄─┤ C3  │◄─┤ C4  │         │
-│  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘         │
+│  ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐           │
+│  │ C1  │◄─┤ C2  │◄─┤ C3  │◄─┤ C4  │           │
+│  └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘           │
 │     │        │        │        │              │
-│  ┌──▼──┐  ┌─▼───┐  ┌─▼───┐  ┌─▼───┐         │
-│  │ C5  │◄─┤ C6  │◄─┤ C7  │◄─┤ C8  │         │
-│  └─────┘  └─────┘  └─────┘  └─────┘         │
+│  ┌──▼──┐  ┌─▼───┐  ┌─▼───┐  ┌─▼───┐           │
+│  │ C5  │◄─┤ C6  │◄─┤ C7  │◄─┤ C8  │           │
+│  └─────┘  └─────┘  └─────┘  └─────┘           │
 │         (MMAS variant)                        │
 │   • Independent evolution                     │
-│   • Pheromone bounds (τ_min, τ_max)         │
-│   • Fully connected topology                 │
+│   • Pheromone bounds (τ_min, τ_max)           │
+│   • Fully connected topology                  │
 └───────────────────────────────────────────────┘
             ▲
             │ receives solutions (one-way)
 ┌───────────┴─────────────────────────────────┐
-│          Pseudo Island                       │
-│   • Low evaporation rate (ρ = 0.58)        │
+│          Pseudo Island                      │
+│   • Low evaporation rate (ρ = 0.58)         │
 │   • Maintains broad solution space          │
 │   • Prevents Master Colony dead-ends        │
 └─────────────────────────────────────────────┘
