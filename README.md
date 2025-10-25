@@ -2,12 +2,6 @@
 
 A novel hybrid algorithm for solving the Capacitated Vehicle Routing Problem (CVRP) using an innovative Master Colony mechanism combined with island-based parallel optimization.
 
-
-
-## Academic Project
-
-This repository contains the implementation of my undergraduate dissertation research at the University of Birmingham (2023-24), supervised by Amina Alkazemi. The work addresses fundamental limitations in traditional Ant Colony Optimization algorithms when solving vehicle routing problems.
-
 ## Table of Contents
 
 - [Problem Statement](#problem-statement)
