@@ -1,6 +1,6 @@
-# Island-based Ant Colony Optimization with Master Colony (IACOMC)
+# Island-based Ant Colony Optimisation with Master Colony (IACOMC)
 
-A novel hybrid algorithm for solving the Capacitated Vehicle Routing Problem (CVRP) using an innovative Master Colony mechanism combined with island-based parallel optimization.
+A novel hybrid algorithm for solving the Capacitated Vehicle Routing Problem (CVRP) using an innovative Master Colony mechanism combined with island-based parallel optimisation.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ A novel hybrid algorithm for solving the Capacitated Vehicle Routing Problem (CV
 
 ## Problem Statement
 
-The **Capacitated Vehicle Routing Problem (CVRP)** is a critical NP-hard optimization challenge faced by logistics companies like Amazon. The problem involves:
+The **Capacitated Vehicle Routing Problem (CVRP)** is a critical NP-hard optimisation challenge faced by logistics companies like Amazon. The problem involves:
 
 - Finding optimal routes for a fleet of vehicles
 - Delivering goods from a central depot to multiple customers
@@ -24,7 +24,7 @@ The **Capacitated Vehicle Routing Problem (CVRP)** is a critical NP-hard optimiz
 
 ### Limitations of Traditional Approaches
 
-Traditional Ant Colony Optimization (ACO) and Max-Min Ant System (MMAS) algorithms suffer from three major issues:
+Traditional Ant Colony optimisation (ACO) and Max-Min Ant System (MMAS) algorithms suffer from three major issues:
 
 1. **Poor solution quality** - Often failing to find optimal or near-optimal solutions
 2. **Slow convergence speed** - Requiring excessive computational time
@@ -251,7 +251,7 @@ The algorithm outputs:
 7. **Boost Phase**: Temporarily increase local search limits for 5 iterations
 8. **Repeat** until convergence or maximum iterations
 
-## Performance Optimization
+## Performance optimisation
 
 ### Parallelization Strategy
 
@@ -337,7 +337,7 @@ Potential extensions and improvements:
 - **Larger Instances**: Scale to 100+ customers (requires parameter tuning)
 - **Dynamic CVRP**: Real-time logistics with time windows and traffic
 - **Multi-depot VRP**: Extend Master Colony to multi-depot scenarios
-- **Hyperparameter Optimization**: Deep learning-based parameter adaptation
+- **Hyperparameter optimisation**: Deep learning-based parameter adaptation
 
 ## Related Work
 
@@ -352,7 +352,7 @@ Key differentiator: First to combine **island-based ACO with pheromone matrix ag
 ## Acknowledgements
 - **Benchmark Datasets**: Augerat et al. (1995)
 - **Theoretical Foundation**: Max-Min Ant System (Stützle & Hoos, 1997)
-- **Optimization Framework**: Optuna (for hyperparameter tuning)
+- **optimisation Framework**: Optuna (for hyperparameter tuning)
 
 ## Contact
 
